@@ -8,7 +8,7 @@ Installation
 ------------
 
 - Download the source
-- Run `python setup.py install` (or `python setup.py develop`)
+- Install with `uv sync` (or `uv pip install -e .`)
 
 
 Usage

@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tri"
+dynamic = ["version"]
+description = "(Constrained) Delaunay Triangulation of Planar Straight Line Graphs (pure Python)"
+readme = "README.txt"
+license = { text = "MIT" }
+authors = [
+  { name = "Martijn Meijers", email = "b.m.meijers@tudelft.nl" },
+]
+dependencies = ["geompreds"]
+requires-python = ">=3.8"
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "Intended Audience :: Information Technology",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.8",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Software Development :: Libraries",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+  "Topic :: Scientific/Engineering :: GIS",
+  "Topic :: Scientific/Engineering :: Information Analysis",
+]
+
+[project.urls]
+Homepage = "https://github.com/micycle1/tri"
+
+[tool.setuptools.dynamic]
+version = { attr = "tri.__version__" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
