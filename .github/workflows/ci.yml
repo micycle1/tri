@@ -6,6 +6,8 @@ on:
 
 jobs:
   build-and-test:
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
