@@ -11,7 +11,7 @@ license = { text = "MIT" }
 authors = [
   { name = "Martijn Meijers", email = "b.m.meijers@tudelft.nl" },
 ]
-dependencies = ["geompreds @ git+https://github.com/bmmeijers/predicates/"]
+dependencies = ["geompreds @ git+https://github.com/micycle1/predicates2"]
 requires-python = ">=3.8"
 classifiers = [
   "Development Status :: 4 - Beta",
