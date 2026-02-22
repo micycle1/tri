@@ -711,11 +711,19 @@ class KDOrderPointInserter(object):
 
         # -- set new vertices and neighbours (in-place)
         # for t0
-        t0v[0] = A; t0v[1] = B; t0v[2] = C
-        t0n[0] = BC; t0n[1] = t1; t0n[2] = AB
+        t0v[0] = A
+        t0v[1] = B
+        t0v[2] = C
+        t0n[0] = BC
+        t0n[1] = t1
+        t0n[2] = AB
         # for t1
-        t1v[0] = C; t1v[1] = D; t1v[2] = A
-        t1n[0] = DA; t1n[1] = t0; t1n[2] = CD
+        t1v[0] = C
+        t1v[1] = D
+        t1v[2] = A
+        t1n[0] = DA
+        t1n[1] = t0
+        t1n[2] = CD
         # -- update coordinate to triangle pointers
         A.triangle = t0
         B.triangle = t0
