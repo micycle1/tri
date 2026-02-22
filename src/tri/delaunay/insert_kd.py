@@ -297,7 +297,7 @@ class KDOrderPointInserter(object):
           pages = {523--530},
           author = {Mir Abolfazl Mostafavi and Christopher Gold and Maciej Dakowicz},
           title = {Delete and insert operations in Voronoi/Delaunay methods and applications},
-          journal = {Computers {\&} Geosciences}
+          journal = {Computers {\\&} Geosciences}
         }
 
         Note 1: the removal does happily remove points if a CDT is used (not ok).
