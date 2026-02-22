@@ -17,11 +17,8 @@ from tri.delaunay.cdt import ConstraintInserter
 from tri.delaunay.iter import FiniteEdgeIterator, StarEdgeIterator
 from tri.delaunay.inout import output_vertices, output_triangles
 
-# py3k
-try:
-    xrange
-except NameError:
-    xrange = range
+# Pre-computed CCW lookup table: _CCW[i] = (i+1) % 3 for i in 0..4
+_CCW = (1, 2, 0, 1, 2)
 
 
 def decorate(points):
@@ -32,8 +29,7 @@ def decorate(points):
 
         (x, y, index in the original *points* list)
     """
-    ret = [(pt[0], pt[1], idx) for (idx, pt) in enumerate(points, start=0)]
-    return ret
+    return [(pt[0], pt[1], idx) for idx, pt in enumerate(points)]
 
 
 def largest_axis(aabb):
@@ -64,7 +60,7 @@ def kdsort(points):
         points.sort(key=operator.itemgetter(axis))
         halfway = len(points) // 2
         # get the pivot point and add the parent vertex identifier to it
-        pivot = tuple(list(points[halfway]) + [parent_id])
+        pivot = points[halfway] + (parent_id,)
         result.append(pivot)
         # determine the next halves
         (xmid, ymid) = pivot[0], pivot[1]
@@ -96,12 +92,12 @@ def kdsort(points):
 def translate_old2new(old_decorated_sorted_pts):
     """Build a translation table.
     """
-    return dict([(pt[2], new_pos) for (new_pos, pt) in enumerate(old_decorated_sorted_pts)])
+    return {pt[2]: new_pos for new_pos, pt in enumerate(old_decorated_sorted_pts)}
 
 def translate_new2old(old_decorated_sorted_pts):
     """Build a translation table.
     """
-    return dict([(new_pos, pt[2]) for (new_pos, pt) in enumerate(old_decorated_sorted_pts)])
+    return {new_pos: pt[2] for new_pos, pt in enumerate(old_decorated_sorted_pts)}
 
 
 class KDOrderPointInserter(object):
@@ -126,16 +122,17 @@ class KDOrderPointInserter(object):
         """Insert a list of points into the triangulation.
         """
         self.initialize(points)
+        tri = self.triangulation
         for j, pt in enumerate(points):
-            logging.debug(" - inserting {}".format(pt))
+            logging.debug(" - inserting %s", pt)
             parent = pt[3]
-            ini = self.triangulation.triangles[0]
+            ini = tri.triangles[0]
             if parent is not None:
-                ini = self.triangulation.vertices[parent].triangle
+                ini = tri.vertices[parent].triangle
             assert ini is not None
             self.append(pt, ini)
             if (j % 10000) == 0:
-                logging.debug(" " + str(datetime.now()) + str(j))
+                logging.debug(" %s%s", datetime.now(), j)
             # check_consistency(triangles)
 
 #    def initialize(self, points):
@@ -237,13 +234,15 @@ class KDOrderPointInserter(object):
         for corner in t0.vertices:
             if corner.x == v.x and corner.y == v.y:
                 raise ValueError("Duplicate point found for insertion")
-        self.triangulation.vertices.append(v)
+        tri = self.triangulation
+        tri.vertices.append(v)
         a, b, c = t0.vertices
         # neighbours outside triangle to insert to
-        neighbours = [t0.neighbours[0], t0.neighbours[1]]
-        neighbouridx = [n.neighbours.index(t0)
-                        if n is not None else None
-                        for n in neighbours]
+        t0n = t0.neighbours
+        n0 = t0n[0]
+        n1 = t0n[1]
+        ni0 = n0.neighbours.index(t0) if n0 is not None else None
+        ni1 = n1.neighbours.index(t0) if n1 is not None else None
         # make new triangles
         t1 = Triangle(b, c, v)
         t2 = Triangle(c, a, v)
@@ -254,29 +253,29 @@ class KDOrderPointInserter(object):
         v.triangle = t0
         c.triangle = t1
         # link them up properly -- use neighbours outside triangle to insert to
-        # external links
-        # 2 * 2
-        if neighbours[0] is not None:
-            side = neighbouridx[0]
-            self.link_1dir(neighbours[0], side, t1)
-        self.link_1dir(t1, 2, neighbours[0])
-        if neighbours[1] is not None:
-            side = neighbouridx[1]
-            self.link_1dir(neighbours[1], side, t2)
-        self.link_1dir(t2, 2, neighbours[1])
-        # internal links
-        # 3 * 2
-        self.link_2dir(t0, 0, t1, 1)
-        self.link_2dir(t1, 0, t2, 1)
-        self.link_2dir(t2, 0, t0, 1)
+        # external links (inlined link_1dir)
+        if n0 is not None:
+            n0.neighbours[ni0] = t1
+        t1.neighbours[2] = n0
+        if n1 is not None:
+            n1.neighbours[ni1] = t2
+        t2.neighbours[2] = n1
+        # internal links (inlined link_2dir)
+        t0n[0] = t1
+        t1.neighbours[1] = t0
+        t1.neighbours[0] = t2
+        t2.neighbours[1] = t1
+        t2.neighbours[0] = t0
+        t0n[1] = t2
         #
-        self.triangulation.triangles.extend([t1, t2])
+        tri.triangles.extend([t1, t2])
         # check if triangles are delaunay, and flip
         # edges of triangle just inserted into are queued for checking
         # Delaunay criterion
-        self.queue.append((t2, 2))
-        self.queue.append((t1, 2))
-        self.queue.append((t0, 2))
+        queue = self.queue
+        queue.append((t2, 2))
+        queue.append((t1, 2))
+        queue.append((t0, 2))
         self.delaunay()
 
 
@@ -586,38 +585,46 @@ class KDOrderPointInserter(object):
         that was used when initializing the triangulation, so make sure
         that a point given fits inside this box!
         """
+        _orient2d = orient2d
+        _randint = randint
+        _ccw = _CCW
         t = ini
         previous = None
         if t.vertices[2] is None:
             t = t.neighbours[2]
         n = len(self.triangulation.triangles)
-        for ct in xrange(n):
+        for ct in range(n):
             # get random side to continue walk, this way the walk cannot get
             # stuck by always picking triangles in the same order
             # (and get stuck in a cycle in case of non-Delaunay triangulation)
-            e = randint(0, 2)
-            if t.neighbours[e] is not previous and \
-                orient2d(t.vertices[ccw(e)],
-                         t.vertices[ccw(e+1)],
-                         p) < 0:
+            tv = t.vertices
+            tn = t.neighbours
+            e = _randint(0, 2)
+            ne = tn[e]
+            if ne is not previous and \
+                _orient2d(tv[_ccw[e]],
+                          tv[_ccw[e + 1]],
+                          p) < 0:
                 previous = t
-                t = t.neighbours[e]
+                t = ne
                 continue
-            e = ccw(e + 1)
-            if t.neighbours[e] is not previous and \
-                orient2d(t.vertices[ccw(e)],
-                         t.vertices[ccw(e+1)],
-                         p) < 0:
+            e = _ccw[e + 1]
+            ne = tn[e]
+            if ne is not previous and \
+                _orient2d(tv[_ccw[e]],
+                          tv[_ccw[e + 1]],
+                          p) < 0:
                 previous = t
-                t = t.neighbours[e]
+                t = ne
                 continue
-            e = ccw(e + 1)
-            if t.neighbours[e] is not previous and \
-                orient2d(t.vertices[ccw(e)],
-                         t.vertices[ccw(e+1)],
-                         p) < 0:
+            e = _ccw[e + 1]
+            ne = tn[e]
+            if ne is not previous and \
+                _orient2d(tv[_ccw[e]],
+                          tv[_ccw[e + 1]],
+                          p) < 0:
                 previous = t
-                t = t.neighbours[e]
+                t = ne
                 continue
             self.visits += ct
             return t
@@ -630,8 +637,11 @@ class KDOrderPointInserter(object):
         If 2 triangles were flipped, the 4 triangles around the quadrilateral
         are queued for checking if these are Delaunay.
         """
-        while self.queue:
-            t0, side0 = self.queue.pop()
+        queue = self.queue
+        _incircle = incircle
+        flip22 = self.flip22
+        while queue:
+            t0, side0 = queue.pop()
             # -- skip constrained edge - these should not be flipped
             if t0.constrained[side0]:
                 continue
@@ -644,16 +654,17 @@ class KDOrderPointInserter(object):
             side1 = t1.neighbours.index(t0)
             if side1 is None:
                 raise ValueError("No opposite triangle found")
-            if incircle(t0.vertices[0], t0.vertices[1], t0.vertices[2],
+            t0v = t0.vertices
+            if _incircle(t0v[0], t0v[1], t0v[2],
                         t1.vertices[side1]) > 0:
                 # flip triangles without creating new triangle objects
-                self.flip22(t0, side0, t1, side1)
+                flip22(t0, side0, t1, side1)
                 # check if all 4 edges around quadrilateral just flipped
                 # are now good: i.e. delaunay criterion applies
-                self.queue.append((t0, 0))
-                self.queue.append((t0, 2))
-                self.queue.append((t1, 0))
-                self.queue.append((t1, 2))
+                queue.append((t0, 0))
+                queue.append((t0, 2))
+                queue.append((t1, 0))
+                queue.append((t1, 2))
 
     def flip22(self, t0, side0, t1, side1):
         """Performs the flip of triangle t0 and t1
@@ -670,54 +681,46 @@ class KDOrderPointInserter(object):
         - the vertices point to the correct triangle
         """
         self.flips += 1
+        _ccw = _CCW
 
-        apex0, orig0, dest0 = apex(side0), orig(side0), dest(side0)
-        apex1, orig1, dest1 = apex(side1), orig(side1), dest(side1)
+        orig0, dest0 = _ccw[side0], (side0 - 1) % 3
+        orig1, dest1 = _ccw[side1], (side1 - 1) % 3
 
-        # side0 and side1 should be same edge
-        assert t0.vertices[orig0] is t1.vertices[dest1]
-        assert t0.vertices[dest0] is t1.vertices[orig1]
-        # assert both triangles have this edge unconstrained
-        assert not t0.constrained[apex0]
-        assert not t1.constrained[apex1]
+        t0v = t0.vertices
+        t1v = t1.vertices
+        t0n = t0.neighbours
+        t1n = t1.neighbours
 
         # -- vertices around quadrilateral in ccw order starting at apex of t0
-        A, B = t0.vertices[apex0], t0.vertices[orig0]
-        C, D = t1.vertices[apex1], t0.vertices[dest0]
+        A, B = t0v[side0], t0v[orig0]
+        C, D = t1v[side1], t0v[dest0]
         # -- triangles around quadrilateral in ccw order, starting at A
-        AB, BC = t0.neighbours[dest0], t1.neighbours[orig1]
-        CD, DA = t1.neighbours[dest1], t0.neighbours[orig0]
+        AB, BC = t0n[dest0], t1n[orig1]
+        CD, DA = t1n[dest1], t0n[orig0]
 
         # link neighbours around quadrilateral to triangles as after the flip
-        # -- the sides of the triangles around are stored in apex_around
-        apex_around = []
-        for neighbour, corner in zip([AB, BC, CD, DA],
-                                     [A, B, C, D]):
-            if neighbour is None:
-                apex_around.append(None)
-            else:
-                assert neighbour is not None
-                assert neighbour.vertices is not None
-                apex_around.append(ccw(neighbour.vertices.index(corner)))
-        # the triangles around we link to the correct triangle *after* the flip
-        for neighbour, side, t in zip([AB, BC, CD, DA],
-                                      apex_around,
-                                      [t0, t0, t1, t1]):
-            if neighbour is not None:
-                self.link_1dir(neighbour, side, t)
+        # (unrolled loop with inlined link_1dir)
+        if AB is not None:
+            AB.neighbours[_ccw[AB.vertices.index(A)]] = t0
+        if BC is not None:
+            BC.neighbours[_ccw[BC.vertices.index(B)]] = t0
+        if CD is not None:
+            CD.neighbours[_ccw[CD.vertices.index(C)]] = t1
+        if DA is not None:
+            DA.neighbours[_ccw[DA.vertices.index(D)]] = t1
 
-        # -- set new vertices and neighbours
+        # -- set new vertices and neighbours (in-place)
         # for t0
-        t0.vertices = [A, B, C]
-        t0.neighbours = [BC, t1, AB]
+        t0v[0] = A; t0v[1] = B; t0v[2] = C
+        t0n[0] = BC; t0n[1] = t1; t0n[2] = AB
         # for t1
-        t1.vertices = [C, D, A]
-        t1.neighbours = [DA, t0, CD]
+        t1v[0] = C; t1v[1] = D; t1v[2] = A
+        t1n[0] = DA; t1n[1] = t0; t1n[2] = CD
         # -- update coordinate to triangle pointers
-        for v in t0.vertices:
-            v.triangle = t0
-        for v in t1.vertices:
-            v.triangle = t1
+        A.triangle = t0
+        B.triangle = t0
+        C.triangle = t1
+        D.triangle = t1
 
     def link_2dir(self, t0, side0, t1, side1):
         """Links two triangles to each other over their common side
@@ -746,15 +749,17 @@ def triangulate(pts, infos=None, segments=None, output=False):
     # _output_triangulation
 
     start = time.perf_counter()
-    logging.debug("")
-    logging.debug(list(enumerate(["{}".format(_)for _ in pts])))
-#     orig_pts = pts[:]
+    is_debug = logging.getLogger().isEnabledFor(logging.DEBUG)
+    if is_debug:
+        logging.debug("")
+        logging.debug(list(enumerate(["{}".format(_)for _ in pts])))
 
     pts = kdsort(decorate(pts))
     old2new = translate_old2new(pts)
     new2old = translate_new2old(pts)
     end = time.perf_counter()
-    logging.debug("Sorting points: " + str(end - start) + " secs")
+    if is_debug:
+        logging.debug("Sorting points: %s secs", end - start)
 
     start = time.perf_counter()
     dt = Triangulation()
@@ -762,14 +767,15 @@ def triangulate(pts, infos=None, segments=None, output=False):
     incremental.insert(pts)
     end = time.perf_counter()
 
-    logging.debug("Triangulating took: " + str(end - start) + " secs")
-    logging.debug("{} triangles".format(len(dt.triangles)))
-    logging.debug("{} vertices".format(len(dt.vertices)))
-    logging.debug("{} flips".format(incremental.flips))
-    logging.debug("{} visits".format(incremental.visits))
-    if len(dt.vertices) > 0:
-        logging.debug(str(float(incremental.flips) /
-                          len(dt.vertices)) + " flips per insert")
+    if is_debug:
+        logging.debug("Triangulating took: %s secs", end - start)
+        logging.debug("%s triangles", len(dt.triangles))
+        logging.debug("%s vertices", len(dt.vertices))
+        logging.debug("%s flips", incremental.flips)
+        logging.debug("%s visits", incremental.visits)
+        if len(dt.vertices) > 0:
+            logging.debug("%s flips per insert",
+                          float(incremental.flips) / len(dt.vertices))
 
     if output:
         with open("/tmp/all_tris.wkt", "w") as fh:
@@ -792,34 +798,28 @@ def triangulate(pts, infos=None, segments=None, output=False):
 
     if segments:
         start = time.perf_counter()
-        logging.debug("")
-        logging.debug("inserting " + str(len(segments)) + " constraints")
+        if is_debug:
+            logging.debug("")
+            logging.debug("inserting %s constraints", len(segments))
         constraints = ConstraintInserter(dt)
         # translate indexes (after kD-sort) of segments to be inserted
-        logging.debug(list(enumerate(["{}".format(_) for _ in dt.vertices])))
-        logging.debug(segments)
-#         orig_segments = segments[:]
-#         for segment in orig_segments:
-#             print("old", orig_pts[segment[0]], orig_pts[segment[1]])
-#         print("")
+        if is_debug:
+            logging.debug(list(enumerate(["{}".format(_) for _ in dt.vertices])))
+            logging.debug(segments)
         segments = [(old2new[segment[0]], old2new[segment[1]])
                     for segment in segments]
-#         for segment in segments:
-#             print("new", pts[segment[0]][:2], pts[segment[1]][:2])
-        logging.debug(segments)
-#         from random import shuffle
-#         print(shuffle(segments))
+        if is_debug:
+            logging.debug(segments)
         constraints.insert(segments)
         end = time.perf_counter()
-        logging.debug(" {time} secs".format(time=(end-start)))
-        logging.debug(" {vertex_count} vertices".format(
-                        vertex_count=len(dt.vertices)))
-        logging.debug(" {triangle_count} triangles".format(
-                        triangle_count=len(dt.triangles)))
-        # Keep FiniteEdgeIterator as iterator (do not read it to memory)
-        edge_it = FiniteEdgeIterator(dt, constraints_only=True)
-        constraint_ct = sum(1 for _ in edge_it)
-        logging.debug(" {count} constraints".format(count=constraint_ct))
+        if is_debug:
+            logging.debug(" %s secs", end - start)
+            logging.debug(" %s vertices", len(dt.vertices))
+            logging.debug(" %s triangles", len(dt.triangles))
+            # Keep FiniteEdgeIterator as iterator (do not read it to memory)
+            edge_it = FiniteEdgeIterator(dt, constraints_only=True)
+            constraint_ct = sum(1 for _ in edge_it)
+            logging.debug(" %s constraints", constraint_ct)
 
     if output:
         with open("/tmp/all_tris.wkt", "w") as fh:
